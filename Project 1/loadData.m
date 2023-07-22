@@ -3,14 +3,16 @@
 % Start from code directory
 
 blankslate;
-addpath(genpath('./npy-matlab-master'));
+%rootfolder = 'Z:\Projects\Project 1';
+%cd(rootfolder);
+%addpath(genpath(fullfile(rootfolder, '/npy-matlab-master')));
 
 %% Specify the path to the folder containing the datasets
 % add path to npy-matlab-master as well as to the current directory for
 % helper functions
 
 mice_name = 'Cori_2016-12-18';
-S = loadSession(fullfile('C:\Users\Admin\Desktop\Data\Steinmetz\allData', mice_name)); % this calls a custom-coded read function for this dataset; it reads all .npy and .tsv files in the directory
+S = loadSession(fullfile('\\eden\neuda2023\Data\Steinmetz\allData', mice_name)); % this calls a custom-coded read function for this dataset; it reads all .npy and .tsv files in the directory
 
 %% Region Properties
 % make a structure containing properties of the regions included in the session
@@ -70,35 +72,56 @@ disp(regionTable) % print out region names
 
 % add more fields to trial structure
 trials.intervals = S.trials.intervals;
-trials.goCue_times = S.trials.goCue_times; % time of stimulus
+trials.goCueTime = S.trials.goCue_times; % time of stimulus
 
-%% 1) Identify neurons in relevant regions (3 = LGd, 9 = VISa, 10 = VISp)
-relReg = 9; %Suggestion for exploration - change this to 9 later, to compare with extrastriate
-neuronsInRegionRowNumbers = find(neurons.region == relReg); %Which rows are relevant?
-neuronIdsInRegion = neurons.id(neuronsInRegionRowNumbers); %Which IDs do these rows correspond to?
-nRelNeuron = length(neuronIdsInRegion); %How many relevant neurons are there?
-spikeTimesPerNeuron = cell(nRelNeuron,3); %Initialize a cell where we will put spike times
+%% Identify neurons, get the spike times and align trial to the experiment time
+alignCues = {'visStimTime', 'goCueTime'};
 
-%% 2) Get the spike times out and assign it to neurons
-for ii = 1:nRelNeuron %Go through all the neurons - relevant ones only
-    tempIndices = find(S.spikes.clusters == neuronIdsInRegion(ii)); %All spikes of a given neuron
-    spikeTimesPerNeuron{ii,1} = ii; %Row number
-    spikeTimesPerNeuron{ii,2} = neuronIdsInRegion(ii); %Which neuron did spikes come from?
-    spikeTimesPerNeuron{ii,3} = S.spikes.times(tempIndices); %Corresponding spiketime
-end %This takes a moment
+for ll = 1:length(regions.name)
+    
+    % Identify neurons in relevant regions
+    relReg = ll; %Suggestion for exploration - change this to 9 later, to compare with extrastriate COMMENT: *VISp is the primary visual cortex COMMENT: do we need to pool many brain regions?
+    neuronsInRegionRowNumbers = find(neurons.region == relReg); %Which rows are relevant?
+    neuronIdsInRegion = neurons.id(neuronsInRegionRowNumbers); %Which IDs do these rows correspond to?
+    nRelNeuron = length(neuronIdsInRegion); %How many relevant neurons are there?
+    spikeTimesPerNeuron = cell(nRelNeuron,3); %Initialize a cell where we will put spike times
 
-%% 3) Align trial to the an experiment time
-alignCue = 'visualStim_times';
-% alignCue = 'goCue_times';
+    % Get the spike times out and assign it to neurons
+    for ii = 1:nRelNeuron %Go through all the neurons - relevant ones only
+        tempIndices = find(S.spikes.clusters == neuronIdsInRegion(ii)); %All spikes of a given neuron
+        spikeTimesPerNeuron{ii,1} = ii; %Row number
+        spikeTimesPerNeuron{ii,2} = neuronIdsInRegion(ii); %Which neuron did spikes come from?
+        spikeTimesPerNeuron{ii,3} = S.spikes.times(tempIndices); %Corresponding spiketime
+    end %This takes a moment
 
-n = trials.N; %How many trials are there?
-spikingPerTrial = cell(n,1); %Now, n is trial number
+    regionActivity = cell(nRelNeuron, trials.N);
 
-for ii = 1:n %Go through all trials and align by stimulus onset time
-    for jj = 1:nRelNeuron % Go through all neurons
-        alignedSpikeTimes = spikeTimesPerNeuron{targetNeuronRow,3}-trials.visStimTime(ii); %On same clock
-        spikingPerTrial{ii} = alignedSpikeTimes(alignedSpikeTimes > onsetCutoff & alignedSpikeTimes < offsetCutoff);
+    % Sort neuron activity based on trials
+    for kk = 1:length(alignCues)
+    
+        %neuronal activity aligned to visual stimulus
+        for ii = 1:trials.N %Go through all trials and align by stimulus onset time
+        
+            for jj = 1:nRelNeuron % Go through all neurons
+        
+                neuronSpikeTimes = spikeTimesPerNeuron{jj,3};
+                validSpikeTimes = neuronSpikeTimes(neuronSpikeTimes >= trials.intervals(ii,1) & neuronSpikeTimes <= trials.intervals(ii,2));
+                alignedSpikeTimes = validSpikeTimes-trials.(alignCues{kk})(ii); %On same clock
+                regionActivity{jj, ii} = alignedSpikeTimes;
+        
+            end
+        
+        end %This should be fast
+        
+        % Important parameters
+        regionName = regions.name(relReg);
+        regionID = relReg;
+        alignCue = alignCues{kk};
+
+        % save
+        save(fullfile(pwd, 'mat-files',...
+            sprintf('%s-%s-spiketimes.mat',regions.name(relReg), alignCues{kk})),...
+            "regionName", "regionID", "regionActivity", "alignCue",...
+            "regions", "spikeTimesPerNeuron");
     end
-end %This should be fast
-
-
+end
